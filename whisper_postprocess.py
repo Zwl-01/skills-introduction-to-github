@@ -75,14 +75,24 @@ def wrap_lines(text: str, max_per_line: int = MAX_CHARS_PER_LINE) -> List[str]:
     return normalized
 
 
-def sanitize_text(text: str) -> str:
-    t = text
+def normalize_text(text: str) -> str:
+    """最小化清理：仅压缩空白，保留标点以便后续比较与切分。"""
+
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def stylize_text(text: str) -> str:
+    """输出阶段的风格处理，可去除标点或首字母大写。"""
+
+    t = normalize_text(text)
+    if not t:
+        return ""
     if STRIP_PUNCTUATION:
         t = punct_re.sub("", t)
-    t = re.sub(r"\s+", " ", t).strip()
     if TITLE_CASE_EACH_WORD:
         def tc(word: str) -> str:
             return word.capitalize() if re.match(r"^[A-Za-z][A-Za-z\-']*$", word) else word
+
         t = " ".join(tc(w) for w in t.split(" "))
     return t
 
@@ -220,7 +230,8 @@ def dedupe_adjacent(segs: Sequence[Tuple[float, float, str]]) -> List[Tuple[floa
         return []
     out: List[Tuple[float, float, str]] = []
     for s, e, t in segs:
-        if out and sanitize_text(out[-1][2]) == sanitize_text(t) and t.strip():
+        current_norm = normalize_text(t)
+        if out and current_norm and normalize_text(out[-1][2]) == current_norm:
             ps, pe, pt = out[-1]
             out[-1] = (ps, e, pt)
         else:
@@ -231,10 +242,10 @@ def dedupe_adjacent(segs: Sequence[Tuple[float, float, str]]) -> List[Tuple[floa
 def postprocess_and_write(segments: Sequence[Tuple[float, float, str]], out_path: Path) -> None:
     tmp: List[Tuple[float, float, str]] = []
     for s, e, t in segments:
-        t_clean = sanitize_text(t)
-        if not t_clean:
+        normalized = normalize_text(t)
+        if not normalized:
             continue
-        parts = split_by_total_chars(t_clean, s, e, MAX_LINE_TOTAL)
+        parts = split_by_total_chars(normalized, s, e, MAX_LINE_TOTAL)
         tmp.extend(parts)
 
     tmp = merge_too_short(tmp, MIN_DURATION)
@@ -242,9 +253,16 @@ def postprocess_and_write(segments: Sequence[Tuple[float, float, str]], out_path
     if DEDUP_ADJACENT_LINES:
         tmp = dedupe_adjacent(tmp)
 
+    final_entries: List[Tuple[float, float, str]] = []
+    for s, e, t in tmp:
+        styled = stylize_text(t)
+        if not styled:
+            continue
+        final_entries.append((s, e, styled))
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
-        for i, (s, e, t) in enumerate(tmp, 1):
+        for i, (s, e, t) in enumerate(final_entries, 1):
             lines = wrap_lines(t)
             f.write(f"{i}\n{format_time(s)} --> {format_time(e)}\n")
             for line in lines:
